@@ -1,0 +1,1 @@
+from templates.reddit.reddit_story import RedditScaryStory

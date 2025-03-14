@@ -1,0 +1,1 @@
+# Application for creating short form content with AI

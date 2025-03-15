@@ -3,6 +3,7 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
 from webdriver_manager.firefox import GeckoDriverManager
 import time
 
@@ -14,7 +15,7 @@ import os
 from narration import create_audio_file
 
 # Set a character threshold for grouping paragraphs
-CHARACTER_THRESHOLD = 300
+CHARACTER_THRESHOLD = 150
 
 class FetchingPageError(Exception):
     def __init__(self):
@@ -26,28 +27,75 @@ class SeleniumError(Exception):
         self.message = f"Selenium error: {message}"
         super().__init__(self.message)
 
-def scrape_reddit_story(thread_url, output_file, tmp_folder='tmp', emotions={}):
+def close_google_signin(driver):
+    try:
+        #driver.switch_to.frame(driver.find_element(By.XPATH, "/html/body/div[3]/iframe"))
+        driver.switch_to.frame(driver.find_element(By.XPATH, "//iframe[contains(@src, 'accounts.google.com/gsi/iframe')]"))
+        # we need to get rid of the google signin popup
+        google_signin_button = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.XPATH, "//*[local-name()='svg' and @class= 'Bz112c Bz112c-r9oPif']"))
+        )
+        google_signin_button.click()
+        # **Switch back to the main content**
+        print('Clicked google signin button.')
+    except TimeoutException:
+        print('Google signin button not available. Skipping clicking it.')
+    finally:
+        driver.switch_to.default_content()
+
+def accept_cookies(driver):
+    try:
+        # Wait for the shadow host element (parent of shadow DOM)
+        shadow_host = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.XPATH, "/html/body/shreddit-app/shreddit-async-loader[2]/reddit-cookie-banner"))
+        )
+
+        # Get the shadow root using JavaScript
+        #shadow_root = driver.execute_script("return arguments[0].shadowRoot", shadow_host)
+        shadow_root = shadow_host.shadow_root
+
+        # Find the Accept button inside shadow root
+        accept_cookies_button = WebDriverWait(driver, 10).until(
+            #EC.element_to_be_clickable((By.XPATH, "/faceplate-dialog/div[2]/shreddit-interactable-element[1]/button"))
+            #EC.element_to_be_clickable((By.CSS_SELECTOR, "accept-all-cookies-button > button:nth-child(1)"))
+            EC.element_to_be_clickable(shadow_root.find_element(By.CSS_SELECTOR, "faceplate-dialog shreddit-interactable-element button"))            
+        )
+
+        # Click the Accept button
+        accept_cookies_button.click()
+        print("Cookies accepted successfully!")
+
+    except TimeoutException:
+        print("Accept cookies button not found or already dismissed.")
+
+def click_read_more_button(driver):
+    try:
+        # first we need to click read more to load all paragraphs
+        read_more_button = WebDriverWait(driver, 5).until(
+            EC.element_to_be_clickable((By.XPATH, "/html/body/shreddit-app/div[2]/div/div/main/shreddit-post/div[3]/div/button"))
+        )
+        read_more_button.click()
+
+    except TimeoutException:
+        print('Read more button not available. Skipping clicking it.')
+
+
+def scrape_reddit_story(thread_url, short_creator, tmp_folder='tmp', emotions={}):
     """
     Scrapes the title and content of a Reddit thread using Selenium.
     :param url: URL of the Reddit thread
     :return: Dictionary with title and content
     """
-    
-    service = Service(GeckoDriverManager().install())
 
-    # Set up Firefox in headless mode
-    options = webdriver.FirefoxOptions()
-    options.add_argument("--width=1920")
-    options.add_argument("--height=1080")
-    options.add_argument("--headless")  # Run without opening a browser
-    options.set_preference('intl.accept_languages', 'en-US, en')
-
-    # Launch Firefox with Selenium
-    driver = webdriver.Firefox(service=service, options=options)
-
+    driver = _setup_driver()
     try:
         # Open the Reddit thread
         driver.get(thread_url)
+
+        # Handle Google Signin popup
+        close_google_signin(driver)
+        # Attempt to accept cookies
+        accept_cookies(driver)
 
         # get banner element (shows subreddit, author, date)
         banner_element = WebDriverWait(driver, 20).until(
@@ -60,16 +108,16 @@ def scrape_reddit_story(thread_url, output_file, tmp_folder='tmp', emotions={}):
         title_text = title_element.get_attribute("aria-label").replace("Post Title: ", "").strip()
         
         # save header of the post as image
-        save_post_header(driver, banner_element, title_element, tmp_folder)
+        header_image_path = save_post_header(banner_element, title_element, tmp_folder)
         # save audio of title of post
-        create_audio_file(title_text, f'{tmp_folder}/audio_title.mp3', emotions)
+        title_audio_path = f'{tmp_folder}/audio_title.mp3'
+        create_audio_file(title_text, title_audio_path, emotions)
 
-        # first we need to click read more to load all paragraphs
-        read_more_button_xpath = "/html/body/shreddit-app/div[2]/div/div/main/shreddit-post/div[3]/div/button"
-        read_more_button = WebDriverWait(driver, 20).until(
-            EC.element_to_be_clickable((By.XPATH, read_more_button_xpath))
-        )
-        read_more_button.click()
+        # add image audio pair of header to short creator object
+        short_creator.add_image_audio_pair(header_image_path, title_audio_path)
+        
+        # click read more button to load all paragraphs, if it exists
+        click_read_more_button(driver)
 
         # Wait for the content to appear
         content_element = WebDriverWait(driver, 20).until(
@@ -100,34 +148,42 @@ def scrape_reddit_story(thread_url, output_file, tmp_folder='tmp', emotions={}):
             current_text_length += len(paragraph_text)
 
             # Check if the total text length exceeds the threshold
-            if current_text_length >= CHARACTER_THRESHOLD:
+            if current_text_length >= CHARACTER_THRESHOLD or i == len(paragraphs) - 1:
                 # save the group of paragraphs as a screenshot
-                save_screenshot_group(driver, current_group, screenshot_index, tmp_folder)
+                image_file_path = save_screenshot_group(driver, current_group, screenshot_index, tmp_folder)
                 # convert group text to audio and save
-                create_audio_file(current_text.strip(), f'{tmp_folder}/audio_{screenshot_index}.mp3', emotions)
+                audio_file_path = f'{tmp_folder}/audio_{screenshot_index}.mp3'
+                create_audio_file(current_text.strip(), audio_file_path, emotions)
+                
+                # add image audio pair of paragraph group to short creator object
+                short_creator.add_image_audio_pair(image_file_path, audio_file_path)
+
                 screenshot_index += 1
 
                 # Reset for next group
                 current_group = []
                 current_text = ""
                 current_text_length = 0
-
-        # **Ensure the last remaining paragraphs are saved** (if any)
-        if current_group:
-            # save the group of paragraphs as a screenshot
-            save_screenshot_group(driver, current_group, screenshot_index, tmp_folder)
-            # convert group text to audio and save
-            create_audio_file(current_text.strip(), f'{tmp_folder}/audio_{screenshot_index}.mp3', emotions)
-        
-        content = "\n".join([p.get_attribute("textContent").strip() for p in paragraphs if p.get_attribute("textContent").strip()])
-
     except Exception as e:
         raise SeleniumError(str(e))
-
     finally:
         driver.quit()
 
-def save_post_header(driver, banner_element, title_element, output_folder):
+def _setup_driver():
+    service = Service(GeckoDriverManager().install())
+
+    # Set up Firefox in headless mode
+    options = webdriver.FirefoxOptions()
+    options.add_argument("--width=400") # smaller width for the paragraphs to be shorter in width
+    options.add_argument("--height=1080")
+    options.add_argument("--headless")  # Run without opening a browser
+    options.set_preference('intl.accept_languages', 'en-US, en')
+
+    # Launch Firefox with Selenium
+    driver = webdriver.Firefox(service=service, options=options)
+    return driver
+
+def save_post_header(banner_element, title_element, output_folder):
     """
     Saves a screenshot of the post header.
     :param driver: Selenium WebDriver instance
@@ -146,6 +202,7 @@ def save_post_header(driver, banner_element, title_element, output_folder):
     final_header_image_path = f"{output_folder}/header.png"
     cropped_image = crop_whitespace(merged_header_image, cut_right=15)
     cropped_image.save(final_header_image_path)
+    return final_header_image_path
 
 def save_screenshot_group(driver, paragraph_group, screenshot_index, output_folder):
     """
@@ -170,9 +227,11 @@ def save_screenshot_group(driver, paragraph_group, screenshot_index, output_fold
     if screenshot_filenames:
         merged_image = merge_screenshots_vertically(screenshot_filenames)
         cropped_image = crop_whitespace(merged_image)
-        final_screenshot_filename = f"{output_folder}/group_{screenshot_index}.png"
+        final_screenshot_filename = f"{output_folder}/temp_group_{screenshot_index}.png"
         cropped_image.save(final_screenshot_filename)
         print(f"Saved grouped screenshot: {final_screenshot_filename}")
+        return final_screenshot_filename
+    return None
 
 def crop_whitespace(image, cut_right=0):
     """Crops the extra white space on the right of the image."""

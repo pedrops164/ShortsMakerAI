@@ -3,6 +3,7 @@ from zyphra import ZyphraClient
 from dotenv import load_dotenv
 load_dotenv()
 import base64
+from requests.exceptions import ChunkedEncodingError
 
 def get_wav_as_base64(wav_file_path):
     with open(wav_file_path, "rb") as wav_file:
@@ -19,14 +20,18 @@ def create_audio_file(text, output_path, emotions={}, voice_clone_path_wav="./vo
 
     # Text-to-speech
     base_64_voice_clone = get_wav_as_base64(voice_clone_path_wav)
-    audio_data = client.audio.speech.create(
-        text=text,
-        speaking_rate=25,
-        output_path=output_path,
-        emotion=emotions,
-        speaker_audio=base_64_voice_clone,
-        model="zonos-v0.1-transformer"  # Default model
-    )
+    try:
+        audio_data = client.audio.speech.create(
+            text=text,
+            speaking_rate=20,
+            output_path=output_path,
+            emotion=emotions,
+            speaker_audio=base_64_voice_clone,
+            mime_type="audio/mp3",
+            model="zonos-v0.1-transformer"  # Default model
+        )
+    except ChunkedEncodingError:
+        raise Exception('Zyphra API request failed')
 
 if __name__ == '__main__':
     create_audio_file('Test speech synthesis', 'output.mp3')

@@ -1,5 +1,7 @@
-requests
-selenium
-webdriver-manager
-pillow
-zyphra
+requests==2.32.3
+selenium==4.29.0
+webdriver-manager==4.0.2
+pillow==10.4.0
+zyphra==0.1.4
+moviepy==1.0.3
+opencv-python==4.11.0.86

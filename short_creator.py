@@ -23,7 +23,7 @@ class ShortCreator:
         Add background music to the video.
         """
         self.background_music = AudioFileClip(audio_path)
-        self.background_music = self.background_music.fx(afx.volumex, 0.5)  # Reduce volume
+        self.background_music = self.background_music.fx(afx.volumex, 0.3)  # Reduce volume
 
 
     def add_background_video(self, video_path):

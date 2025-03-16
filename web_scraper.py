@@ -11,9 +11,6 @@ import time
 from PIL import Image, ImageOps
 import os
 
-# import narration for text-to-speech
-from narration import create_audio_file
-
 # Set a character threshold for grouping paragraphs
 CHARACTER_THRESHOLD = 150
 
@@ -80,14 +77,14 @@ def click_read_more_button(driver):
         print('Read more button not available. Skipping clicking it.')
 
 
-def scrape_reddit_story(thread_url, short_creator, tmp_folder='tmp', emotions={}):
+def scrape_reddit_story(thread_url, short_creator, narrator, tmp_folder='tmp', dark_mode=False):
     """
     Scrapes the title and content of a Reddit thread using Selenium.
     :param url: URL of the Reddit thread
     :return: Dictionary with title and content
     """
 
-    driver = _setup_driver()
+    driver = _setup_driver(dark_mode)
     try:
         # Open the Reddit thread
         driver.get(thread_url)
@@ -108,10 +105,10 @@ def scrape_reddit_story(thread_url, short_creator, tmp_folder='tmp', emotions={}
         title_text = title_element.get_attribute("aria-label").replace("Post Title: ", "").strip()
         
         # save header of the post as image
-        header_image_path = save_post_header(banner_element, title_element, tmp_folder)
+        header_image_path = save_post_header(banner_element, title_element, tmp_folder, dark_mode=dark_mode)
         # save audio of title of post
         title_audio_path = f'{tmp_folder}/audio_title.mp3'
-        create_audio_file(title_text, title_audio_path, emotions)
+        narrator.create_audio_file(title_text, title_audio_path)
 
         # add image audio pair of header to short creator object
         short_creator.add_image_audio_pair(header_image_path, title_audio_path)
@@ -150,10 +147,10 @@ def scrape_reddit_story(thread_url, short_creator, tmp_folder='tmp', emotions={}
             # Check if the total text length exceeds the threshold
             if current_text_length >= CHARACTER_THRESHOLD or i == len(paragraphs) - 1:
                 # save the group of paragraphs as a screenshot
-                image_file_path = save_screenshot_group(driver, current_group, screenshot_index, tmp_folder)
+                image_file_path = save_screenshot_group(driver, current_group, screenshot_index, tmp_folder, dark_mode=dark_mode)
                 # convert group text to audio and save
                 audio_file_path = f'{tmp_folder}/audio_{screenshot_index}.mp3'
-                create_audio_file(current_text.strip(), audio_file_path, emotions)
+                narrator.create_audio_file(current_text.strip(), audio_file_path)
                 
                 # add image audio pair of paragraph group to short creator object
                 short_creator.add_image_audio_pair(image_file_path, audio_file_path)
@@ -169,7 +166,7 @@ def scrape_reddit_story(thread_url, short_creator, tmp_folder='tmp', emotions={}
     finally:
         driver.quit()
 
-def _setup_driver():
+def _setup_driver(dark_mode):
     service = Service(GeckoDriverManager().install())
 
     # Set up Firefox in headless mode
@@ -178,12 +175,15 @@ def _setup_driver():
     options.add_argument("--height=1080")
     options.add_argument("--headless")  # Run without opening a browser
     options.set_preference('intl.accept_languages', 'en-US, en')
+    if dark_mode:
+        # Set the theme to dark mode
+        options.set_preference("ui.systemUsesDarkTheme", 1)
 
     # Launch Firefox with Selenium
     driver = webdriver.Firefox(service=service, options=options)
     return driver
 
-def save_post_header(banner_element, title_element, output_folder):
+def save_post_header(banner_element, title_element, output_folder, dark_mode=False):
     """
     Saves a screenshot of the post header.
     :param driver: Selenium WebDriver instance
@@ -200,11 +200,11 @@ def save_post_header(banner_element, title_element, output_folder):
 
     merged_header_image = merge_screenshots_vertically([banner_temp_path, title_temp_path])
     final_header_image_path = f"{output_folder}/header.png"
-    cropped_image = crop_whitespace(merged_header_image, cut_right=15)
+    cropped_image = crop_extraspace(merged_header_image, cut_right=15, dark_mode=dark_mode)
     cropped_image.save(final_header_image_path)
     return final_header_image_path
 
-def save_screenshot_group(driver, paragraph_group, screenshot_index, output_folder):
+def save_screenshot_group(driver, paragraph_group, screenshot_index, output_folder, dark_mode):
     """
     Saves a screenshot for a grouped set of paragraphs.
     :param driver: Selenium WebDriver instance
@@ -226,21 +226,22 @@ def save_screenshot_group(driver, paragraph_group, screenshot_index, output_fold
     # Concatenate and save the final grouped screenshot
     if screenshot_filenames:
         merged_image = merge_screenshots_vertically(screenshot_filenames)
-        cropped_image = crop_whitespace(merged_image)
+        cropped_image = crop_extraspace(merged_image, dark_mode=dark_mode)
         final_screenshot_filename = f"{output_folder}/temp_group_{screenshot_index}.png"
         cropped_image.save(final_screenshot_filename)
         print(f"Saved grouped screenshot: {final_screenshot_filename}")
         return final_screenshot_filename
     return None
 
-def crop_whitespace(image, cut_right=0):
+def crop_extraspace(image, cut_right=0, dark_mode=False):
     """Crops the extra white space on the right of the image."""
     if cut_right > 0:
         image = image.crop((0, 0, image.width - cut_right, image.height))
     bbox = ImageOps.invert(image).getbbox()
     trimmed_image = image.crop(bbox)
+    fill_color = '#0E1113' if dark_mode else 'white'
     # add white border all around for visuals
-    res = ImageOps.expand(trimmed_image, border=10, fill='white')
+    res = ImageOps.expand(trimmed_image, border=10, fill=fill_color)
     return res
 
 def merge_screenshots_vertically(image_paths):

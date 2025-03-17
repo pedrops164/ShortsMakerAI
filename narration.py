@@ -6,12 +6,15 @@ load_dotenv()
 import base64
 from requests.exceptions import ChunkedEncodingError
 
+TMP_FOLDER = os.environ.get('TMP_FOLDER')
+
 def get_wav_as_base64(wav_file_path):
     with open(wav_file_path, "rb") as wav_file:
         return base64.b64encode(wav_file.read()).decode('utf-8')
 
 class Narrator:
     def __init__(self, voice_clone_path_wav="./voice_samples/voice_zonos_gb_male.wav", zyphra_emotions={}):
+        self.audio_index = 0
         self.voice_clone_path_wav = voice_clone_path_wav
         if os.environ.get('TTS_PROVIDER') == 'zyphra':
             self.emotions = zyphra_emotions
@@ -29,12 +32,14 @@ class Narrator:
                 raise Exception('OpenAI api key not set')
             self.client = OpenAI(api_key=openai_key)
         else:
+            print('provider - ', os.environ.get('TTS_PROVIDER'))
             raise Exception('TTS provider not set')
 
-    def create_audio_file(self, text, output_path):
+    def create_audio_file(self, text):
+        output_path = os.path.join(TMP_FOLDER, f'audio_{self.audio_index}.mp3')
+        self.audio_index += 1
 
         # Text-to-speech
-        base_64_voice_clone = get_wav_as_base64(self.voice_clone_path_wav)
         try:
             if os.environ.get('TTS_PROVIDER') == 'openai':
                 audio_data = self.client.audio.speech.create(
@@ -46,6 +51,7 @@ class Narrator:
                 )
                 audio_data.write_to_file(output_path)
             elif os.environ.get('TTS_PROVIDER') == 'zyphra':
+                base_64_voice_clone = get_wav_as_base64(self.voice_clone_path_wav)
                 audio_data = self.client.audio.speech.create(
                     text=text,
                     speaking_rate=20,
@@ -57,9 +63,14 @@ class Narrator:
                 )
             else:
                 raise Exception('TTS provider not set')
+            return output_path
         except ChunkedEncodingError:
             raise Exception('Zyphra API request failed')
-
-if __name__ == '__main__':
-    narrator = Narrator()
-    narrator.create_audio_file('Test speech synthesis', 'output.mp3')
+        
+    def get_post_narrations(self, title, content):
+        title_narration = self.create_audio_file(title)
+        content_narrations = []
+        if content is not None:
+            for text in content:
+                content_narrations.append(self.create_audio_file(text))
+        return title_narration, content_narrations

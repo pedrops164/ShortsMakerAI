@@ -11,8 +11,7 @@ import time
 from PIL import Image, ImageOps
 import os
 
-# Set a character threshold for grouping paragraphs
-CHARACTER_THRESHOLD = 150
+TMP_FOLDER = os.environ.get('TMP_FOLDER')
 
 class FetchingPageError(Exception):
     def __init__(self):
@@ -76,24 +75,54 @@ def click_read_more_button(driver):
     except TimeoutException:
         print('Read more button not available. Skipping clicking it.')
 
+def scrape_reddit_thread(driver, dark_mode=False, title_only=False, character_threshold=None):
+    """
+    Scrapes the post and answers of a Reddit thread using Selenium.
+    """
+    post_title_text, post_content_texts, post_header_image_path, post_content_images_paths = scrape_reddit_post(driver, dark_mode, title_only, character_threshold)
 
-def scrape_reddit_story(thread_url, short_creator, narrator, tmp_folder='tmp', dark_mode=False):
+    # scrape answers
+    comment_tree_element = WebDriverWait(driver, 20).until(
+        EC.presence_of_element_located((By.XPATH, "/html/body/shreddit-app/div[2]/div/div/main/div/faceplate-batch/shreddit-comment-tree"))
+    )
+    comments = comment_tree_element.find_elements(By.TAG_NAME, "shreddit-comment")
+    for comment in comments[:5]:
+        try:
+            # Locate the paragraph inside the comment
+            paragraph = comment.find_element(By.XPATH, ".//div[contains(@id, '-post-rtjson-content')]//p")
+            print(paragraph.text)  # Print the comment text
+            print()
+        except Exception as e:
+            print("Error extracting comment:", e)
+
+
+def scrape_reddit_post(driver, dark_mode=False, title_only=False, character_threshold=None):
     """
     Scrapes the title and content of a Reddit thread using Selenium.
     :param url: URL of the Reddit thread
-    :return: Dictionary with title and content
+
+    If title_only is True, the print of the entire post will be returned in title_image, and content_images_paths will be empty.
+    If title_only is False, the title and content prints will be returned separately in header_image_path and content_images_paths respectively.
+    If character_threshold is set, the content will be grouped into paragraphs of at most that many characters. The prints of the content will also be split accordingly.
     """
-
-    driver = _setup_driver(dark_mode)
     try:
-        # Open the Reddit thread
-        driver.get(thread_url)
+        # set return variables
+        title_text = None
+        content_texts = []
+        header_image_path = None
+        content_images_paths = []
+        
+        title_text, header_image_path = scrape_reddit_post_header(driver, dark_mode)
 
-        # Handle Google Signin popup
-        close_google_signin(driver)
-        # Attempt to accept cookies
-        accept_cookies(driver)
+        if not title_only:
+            content_texts, content_images_paths = scrape_reddit_post_content(driver, dark_mode, character_threshold)
 
+        return title_text, content_texts, header_image_path, content_images_paths
+    except Exception as e:
+        raise SeleniumError(str(e))
+
+def scrape_reddit_post_header(driver, dark_mode):
+    try:
         # get banner element (shows subreddit, author, date)
         banner_element = WebDriverWait(driver, 20).until(
             EC.presence_of_element_located((By.XPATH, "/html/body/shreddit-app/div[2]/div/div/main/shreddit-post/div[1]"))
@@ -103,72 +132,71 @@ def scrape_reddit_story(thread_url, short_creator, narrator, tmp_folder='tmp', d
             EC.presence_of_element_located((By.XPATH, "/html/body/shreddit-app/div[2]/div/div/main/shreddit-post/h1"))
         )
         title_text = title_element.get_attribute("aria-label").replace("Post Title: ", "").strip()
-        
-        # save header of the post as image
-        header_image_path = save_post_header(banner_element, title_element, tmp_folder, dark_mode=dark_mode)
-        # save audio of title of post
-        title_audio_path = f'{tmp_folder}/audio_title.mp3'
-        narrator.create_audio_file(title_text, title_audio_path)
 
-        # add image audio pair of header to short creator object
-        short_creator.add_image_audio_pair(header_image_path, title_audio_path)
-        
-        # click read more button to load all paragraphs, if it exists
-        click_read_more_button(driver)
+        banner_temp_path = f"{TMP_FOLDER}/temp_banner.png" # path to image of banner
+        title_temp_path = f"{TMP_FOLDER}/temp_title.png" # path to image of title
+        # save screenshot of banner
+        banner_element.screenshot(banner_temp_path)
+        # save screenshot of title
+        title_element.screenshot(title_temp_path)
 
+        merged_header_image = merge_screenshots_vertically([banner_temp_path, title_temp_path])
+        header_image_path = f"{TMP_FOLDER}/header.png"
+        cropped_image = crop_extraspace(merged_header_image, cut_right=15, dark_mode=dark_mode)
+        cropped_image.save(header_image_path)
+        return title_text, header_image_path
+    except Exception as e:
+        raise SeleniumError(str(e))
+
+def scrape_reddit_post_content(driver, dark_mode, character_threshold):
+    content_texts = []
+    content_images_paths = []
+
+    try:
         # Wait for the content to appear
         content_element = WebDriverWait(driver, 20).until(
             EC.presence_of_element_located((By.XPATH, "/html/body/shreddit-app/div[2]/div/div/main/shreddit-post/div[3]/div/div[1]"))
         )
-        
         # Extract paragraphs
         paragraphs = content_element.find_elements(By.TAG_NAME, "p")
-
         if not paragraphs:
             raise Exception("No paragraphs found")
-
-        current_group = []  # Store paragraphs for the current batch
-        current_text = ""
-        current_text_length = 0
-        screenshot_index = 1
         
-        # Iterate through paragraphs and capture individual screenshots
-        for i, paragraph in enumerate(paragraphs):
-            paragraph_text = paragraph.text.strip()
+        if len(paragraphs) > 0:
+            current_group = []  # Store paragraphs for the current batch
+            current_text = ""
+            current_text_length = 0
+            screenshot_index = 1
+            
+            # Iterate through paragraphs and capture individual screenshots
+            for i, paragraph in enumerate(paragraphs):
+                paragraph_text = paragraph.text.strip()
 
-            if not paragraph_text:  # Skip empty paragraphs
-                continue
+                if not paragraph_text:  # Skip empty paragraphs
+                    continue
 
-            # Add paragraph to the group
-            current_group.append(paragraph)
-            current_text += paragraph_text + "\n"
-            current_text_length += len(paragraph_text)
+                # Add paragraph to the group
+                current_group.append(paragraph)
+                current_text += paragraph_text + "\n"
+                current_text_length += len(paragraph_text)
 
-            # Check if the total text length exceeds the threshold
-            if current_text_length >= CHARACTER_THRESHOLD or i == len(paragraphs) - 1:
-                # save the group of paragraphs as a screenshot
-                image_file_path = save_screenshot_group(driver, current_group, screenshot_index, tmp_folder, dark_mode=dark_mode)
-                # convert group text to audio and save
-                audio_file_path = f'{tmp_folder}/audio_{screenshot_index}.mp3'
-                narrator.create_audio_file(current_text.strip(), audio_file_path)
-                
-                # add image audio pair of paragraph group to short creator object
-                short_creator.add_image_audio_pair(image_file_path, audio_file_path)
-
-                screenshot_index += 1
-
-                # Reset for next group
-                current_group = []
-                current_text = ""
-                current_text_length = 0
+                # Check if the total text length exceeds the threshold
+                if (character_threshold is not None and current_text_length >= character_threshold) or i == len(paragraphs) - 1:
+                    # save the group of paragraphs as a screenshot
+                    content_image_file_path = save_screenshot_group(driver, current_group, screenshot_index, dark_mode=dark_mode)
+                    content_images_paths.append(content_image_file_path)
+                    content_texts.append(current_text.strip())
+                    screenshot_index += 1
+                    # Reset for next group
+                    current_group = []
+                    current_text = ""
+                    current_text_length = 0
+        return content_texts, content_images_paths
     except Exception as e:
         raise SeleniumError(str(e))
-    finally:
-        driver.quit()
 
-def _setup_driver(dark_mode):
+def setup_driver_reddit(thread_url, dark_mode):
     service = Service(GeckoDriverManager().install())
-
     # Set up Firefox in headless mode
     options = webdriver.FirefoxOptions()
     options.add_argument("--width=400") # smaller width for the paragraphs to be shorter in width
@@ -181,37 +209,26 @@ def _setup_driver(dark_mode):
 
     # Launch Firefox with Selenium
     driver = webdriver.Firefox(service=service, options=options)
-    return driver
+    # Open the Reddit thread
+    try:
+        driver.get(thread_url)
+        # Handle Google Signin popup
+        close_google_signin(driver)
+        # Attempt to accept cookies
+        accept_cookies(driver)
+        # click read more button to load all paragraphs, if it exists
+        click_read_more_button(driver)
+        return driver
+    except Exception as e:
+        raise SeleniumError(str(e))
 
-def save_post_header(banner_element, title_element, output_folder, dark_mode=False):
-    """
-    Saves a screenshot of the post header.
-    :param driver: Selenium WebDriver instance
-    :param output_folder: Folder where images will be saved
-    """
-
-    banner_temp_path = f"{output_folder}/temp_banner.png"
-    # get screenshots of entire post
-    banner_element.screenshot(banner_temp_path)
-
-    title_temp_path = f"{output_folder}/temp_title.png"
-    # get screenshots of entire post
-    title_element.screenshot(title_temp_path)
-
-    merged_header_image = merge_screenshots_vertically([banner_temp_path, title_temp_path])
-    final_header_image_path = f"{output_folder}/header.png"
-    cropped_image = crop_extraspace(merged_header_image, cut_right=15, dark_mode=dark_mode)
-    cropped_image.save(final_header_image_path)
-    return final_header_image_path
-
-def save_screenshot_group(driver, paragraph_group, screenshot_index, output_folder, dark_mode):
+def save_screenshot_group(driver, paragraph_group, screenshot_index, dark_mode):
     """
     Saves a screenshot for a grouped set of paragraphs.
     :param driver: Selenium WebDriver instance
     :param paragraph_group: List of WebElements containing paragraphs
     :param screenshot_index: Index for the saved file name
-    :param output_folder: Folder where images will be saved
-    """
+    :param dark_mode: Whether to use dark mode"""
     # Scroll into view of the first paragraph in the group
     driver.execute_script("arguments[0].scrollIntoView();", paragraph_group[0])
     time.sleep(1)  # Allow time for rendering
@@ -219,7 +236,7 @@ def save_screenshot_group(driver, paragraph_group, screenshot_index, output_fold
     # Capture screenshots of all grouped paragraphs
     screenshot_filenames = []
     for j, p in enumerate(paragraph_group):
-        filename = f"{output_folder}/temp_{screenshot_index}_{j}.png"
+        filename = f"{TMP_FOLDER}/temp_{screenshot_index}_{j}.png"
         p.screenshot(filename)
         screenshot_filenames.append(filename)
 
@@ -227,7 +244,7 @@ def save_screenshot_group(driver, paragraph_group, screenshot_index, output_fold
     if screenshot_filenames:
         merged_image = merge_screenshots_vertically(screenshot_filenames)
         cropped_image = crop_extraspace(merged_image, dark_mode=dark_mode)
-        final_screenshot_filename = f"{output_folder}/temp_group_{screenshot_index}.png"
+        final_screenshot_filename = f"{TMP_FOLDER}/temp_group_{screenshot_index}.png"
         cropped_image.save(final_screenshot_filename)
         print(f"Saved grouped screenshot: {final_screenshot_filename}")
         return final_screenshot_filename
@@ -270,3 +287,9 @@ def merge_screenshots_vertically(image_paths):
         os.remove(img)
 
     return merged_image
+
+if __name__ == '__main__':
+    # test scrape_reddit_thread:
+    thread_url = "https://www.reddit.com/r/scarystories/comments/ijjshz/run/"  # Scary story thread
+    driver = setup_driver_reddit(thread_url, dark_mode=True)
+    scrape_reddit_thread(driver, dark_mode=True)

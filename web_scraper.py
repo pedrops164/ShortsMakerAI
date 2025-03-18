@@ -10,6 +10,7 @@ import time
 # for image concatenation
 from PIL import Image, ImageOps
 import os
+import io
 
 TMP_FOLDER = os.environ.get('TMP_FOLDER')
 
@@ -86,14 +87,47 @@ def scrape_reddit_thread(driver, dark_mode=False, title_only=False, character_th
         EC.presence_of_element_located((By.XPATH, "/html/body/shreddit-app/div[2]/div/div/main/div/faceplate-batch/shreddit-comment-tree"))
     )
     comments = comment_tree_element.find_elements(By.TAG_NAME, "shreddit-comment")
-    for comment in comments[:5]:
+    comments = [c for c in comments if c.get_attribute("depth") == "0"]  # Only top-level comments
+    comments_content_paragraphs = []
+    comments_content_image_paths = []
+    for i, comment in enumerate(comments[:5]):
         try:
-            # Locate the paragraph inside the comment
-            paragraph = comment.find_element(By.XPATH, ".//div[contains(@id, '-post-rtjson-content')]//p")
-            print(paragraph.text)  # Print the comment text
-            print()
+            # Extract elements
+            avatar_element = comment.find_element(By.XPATH, ".//*[@slot='commentAvatar']")
+            meta_element = comment.find_element(By.XPATH, ".//*[@slot='commentMeta']")
+            action_row = comment.find_element(By.XPATH, ".//*[@slot='actionRow']")
+
+            # Get images as png and get Image object from it
+            avatar_image = Image.open(io.BytesIO(avatar_element.screenshot_as_png))
+            meta_image = Image.open(io.BytesIO(meta_element.screenshot_as_png))
+            action_image = Image.open(io.BytesIO(action_row.screenshot_as_png))
+
+            # Get content element. This is where the paragraphs of the comment are.
+            content_element = comment.find_element(By.XPATH, ".//*[@slot='comment']")
+            paragraphs = content_element.find_elements(By.TAG_NAME, "p")
+            if not paragraphs:
+                raise Exception("No paragraphs found in comment.")
+            # Split the paragraphs into groups of at most character_threshold characters (if set)
+            paragraphs_texts, paragraphs_images_paths = _split_paragraphs(paragraphs, character_threshold, dark_mode)
+            comments_content_paragraphs.append(paragraphs_texts)
+            assert len(paragraphs_images_paths) > 0, "No paragraphs images found"
+            # Build list of images of this comment. If character_threshold is None, this will only be one image.
+            comment_images = [Image.open(img) for img in paragraphs_images_paths]
+            # We merge the avatar_meta image to the first paragraph image, and we merge the last paragraph image with the action image.
+            
+
+            avatar_meta_image = merge_screenshots([avatar_image, meta_image], horizontal=True, dark_mode=dark_mode)
+            comment_images[0] = merge_screenshots([avatar_meta_image, comment_images[0]], horizontal=False, dark_mode=dark_mode)
+            comment_images[-1] = merge_screenshots([comment_images[-1], action_image], horizontal=False, dark_mode=dark_mode)
+            for j, img in enumerate(comment_images):
+                comment_image_path = f"{TMP_FOLDER}/comment_{i+1}_{j+1}.png"
+                cropped_image = crop_extraspace(img, dark_mode=dark_mode)
+                cropped_image.save(comment_image_path)
+                print(f"Saved comment screenshot: {comment_image_path}")
+                comments_content_image_paths.append(comment_image_path)
         except Exception as e:
             print("Error extracting comment:", e)
+    return post_title_text, post_content_texts, post_header_image_path, post_content_images_paths, comments_content_paragraphs, comments_content_image_paths
 
 
 def scrape_reddit_post(driver, dark_mode=False, title_only=False, character_threshold=None):
@@ -133,14 +167,13 @@ def scrape_reddit_post_header(driver, dark_mode):
         )
         title_text = title_element.get_attribute("aria-label").replace("Post Title: ", "").strip()
 
-        banner_temp_path = f"{TMP_FOLDER}/temp_banner.png" # path to image of banner
-        title_temp_path = f"{TMP_FOLDER}/temp_title.png" # path to image of title
-        # save screenshot of banner
-        banner_element.screenshot(banner_temp_path)
-        # save screenshot of title
-        title_element.screenshot(title_temp_path)
+        # get images as png and get Image object from it
+        banner_image_png = banner_element.screenshot_as_png
+        banner_image = Image.open(io.BytesIO(banner_image_png))
+        title_image_png = title_element.screenshot_as_png
+        title_image = Image.open(io.BytesIO(title_image_png))
 
-        merged_header_image = merge_screenshots_vertically([banner_temp_path, title_temp_path])
+        merged_header_image = merge_screenshots([banner_image, title_image], dark_mode=dark_mode)
         header_image_path = f"{TMP_FOLDER}/header.png"
         cropped_image = crop_extraspace(merged_header_image, cut_right=15, dark_mode=dark_mode)
         cropped_image.save(header_image_path)
@@ -149,9 +182,6 @@ def scrape_reddit_post_header(driver, dark_mode):
         raise SeleniumError(str(e))
 
 def scrape_reddit_post_content(driver, dark_mode, character_threshold):
-    content_texts = []
-    content_images_paths = []
-
     try:
         # Wait for the content to appear
         content_element = WebDriverWait(driver, 20).until(
@@ -162,38 +192,43 @@ def scrape_reddit_post_content(driver, dark_mode, character_threshold):
         if not paragraphs:
             raise Exception("No paragraphs found")
         
-        if len(paragraphs) > 0:
-            current_group = []  # Store paragraphs for the current batch
-            current_text = ""
-            current_text_length = 0
-            screenshot_index = 1
-            
-            # Iterate through paragraphs and capture individual screenshots
-            for i, paragraph in enumerate(paragraphs):
-                paragraph_text = paragraph.text.strip()
-
-                if not paragraph_text:  # Skip empty paragraphs
-                    continue
-
-                # Add paragraph to the group
-                current_group.append(paragraph)
-                current_text += paragraph_text + "\n"
-                current_text_length += len(paragraph_text)
-
-                # Check if the total text length exceeds the threshold
-                if (character_threshold is not None and current_text_length >= character_threshold) or i == len(paragraphs) - 1:
-                    # save the group of paragraphs as a screenshot
-                    content_image_file_path = save_screenshot_group(driver, current_group, screenshot_index, dark_mode=dark_mode)
-                    content_images_paths.append(content_image_file_path)
-                    content_texts.append(current_text.strip())
-                    screenshot_index += 1
-                    # Reset for next group
-                    current_group = []
-                    current_text = ""
-                    current_text_length = 0
-        return content_texts, content_images_paths
+        return _split_paragraphs(paragraphs, character_threshold, dark_mode)
     except Exception as e:
         raise SeleniumError(str(e))
+    
+def _split_paragraphs(paragraphs, character_threshold, dark_mode):
+    content_texts = []
+    content_images_paths = []
+    if len(paragraphs) > 0:
+        current_group = []  # Store paragraphs for the current batch
+        current_text = ""
+        current_text_length = 0
+        screenshot_index = 1
+        
+        # Iterate through paragraphs and capture individual screenshots
+        for i, paragraph in enumerate(paragraphs):
+            paragraph_text = paragraph.text.strip()
+
+            if not paragraph_text:  # Skip empty paragraphs
+                continue
+
+            # Add paragraph to the group
+            current_group.append(paragraph)
+            current_text += paragraph_text + "\n"
+            current_text_length += len(paragraph_text)
+
+            # Check if the total text length exceeds the threshold
+            if (character_threshold is not None and current_text_length >= character_threshold) or i == len(paragraphs) - 1:
+                # save the group of paragraphs as a screenshot
+                content_image_file_path = save_screenshot_group(driver, current_group, screenshot_index, dark_mode=dark_mode)
+                content_images_paths.append(content_image_file_path)
+                content_texts.append(current_text.strip())
+                screenshot_index += 1
+                # Reset for next group
+                current_group = []
+                current_text = ""
+                current_text_length = 0
+    return content_texts, content_images_paths
 
 def setup_driver_reddit(thread_url, dark_mode):
     service = Service(GeckoDriverManager().install())
@@ -234,15 +269,18 @@ def save_screenshot_group(driver, paragraph_group, screenshot_index, dark_mode):
     time.sleep(1)  # Allow time for rendering
 
     # Capture screenshots of all grouped paragraphs
-    screenshot_filenames = []
+    paragraph_images = []
     for j, p in enumerate(paragraph_group):
-        filename = f"{TMP_FOLDER}/temp_{screenshot_index}_{j}.png"
-        p.screenshot(filename)
-        screenshot_filenames.append(filename)
+        #filename = f"{TMP_FOLDER}/temp_{screenshot_index}_{j}.png"
+        #p.screenshot(filename)
+        #screenshot_filenames.append(filename)
+        paragraph_png = p.screenshot_as_png
+        paragraph_image = Image.open(io.BytesIO(paragraph_png))
+        paragraph_images.append(paragraph_image)
 
     # Concatenate and save the final grouped screenshot
-    if screenshot_filenames:
-        merged_image = merge_screenshots_vertically(screenshot_filenames)
+    if paragraph_images:
+        merged_image = merge_screenshots(paragraph_images, dark_mode=dark_mode)
         cropped_image = crop_extraspace(merged_image, dark_mode=dark_mode)
         final_screenshot_filename = f"{TMP_FOLDER}/temp_group_{screenshot_index}.png"
         cropped_image.save(final_screenshot_filename)
@@ -261,30 +299,37 @@ def crop_extraspace(image, cut_right=0, dark_mode=False):
     res = ImageOps.expand(trimmed_image, border=10, fill=fill_color)
     return res
 
-def merge_screenshots_vertically(image_paths):
+def merge_screenshots(images, horizontal=False, dark_mode=False):
     """
     Merges multiple images vertically into a single image.
     :param image_paths: List of image file paths to merge
     :return: Merged PIL image
     """
-    images = [Image.open(img) for img in image_paths]
+    #images = [Image.open(img) for img in image_paths]
+    bg_color = '#0E1113' if dark_mode else 'white'
 
-    # Get total height and max width
-    total_height = sum(img.height for img in images)
-    max_width = max(img.width for img in images)
+    if horizontal:
+        # Get total width and max height
+        total_width = sum(img.width for img in images)
+        max_height = max(img.height for img in images)
+        merged_image = Image.new("RGB", (total_width, max_height), bg_color)
 
-    # Create a new blank image
-    merged_image = Image.new("RGB", (max_width, total_height), "white")
+        # Paste images
+        x_offset = 0
+        for img in images:
+            merged_image.paste(img, (x_offset, 0))
+            x_offset += img.width
+    else:
+        # Get max width and total height
+        total_height = sum(img.height for img in images)
+        max_width = max(img.width for img in images)
+        merged_image = Image.new("RGB", (max_width, total_height), bg_color)
 
-    # Paste images into new image
-    y_offset = 0
-    for img in images:
-        merged_image.paste(img, (0, y_offset))
-        y_offset += img.height
-
-    # Cleanup temporary images
-    for img in image_paths:
-        os.remove(img)
+        # Paste images
+        y_offset = 0
+        for img in images:
+            merged_image.paste(img, (0, y_offset))
+            y_offset += img.height
 
     return merged_image
 
@@ -292,4 +337,4 @@ if __name__ == '__main__':
     # test scrape_reddit_thread:
     thread_url = "https://www.reddit.com/r/scarystories/comments/ijjshz/run/"  # Scary story thread
     driver = setup_driver_reddit(thread_url, dark_mode=True)
-    scrape_reddit_thread(driver, dark_mode=True)
+    scrape_reddit_thread(driver, dark_mode=True, character_threshold=10)

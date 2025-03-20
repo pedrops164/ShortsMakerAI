@@ -11,6 +11,7 @@ import time
 from PIL import Image, ImageOps
 import os
 import io
+import re
 
 TMP_FOLDER = os.environ.get('TMP_FOLDER')
 
@@ -76,21 +77,30 @@ def click_read_more_button(driver):
     except TimeoutException:
         print('Read more button not available. Skipping clicking it.')
 
-def scrape_reddit_thread(driver, dark_mode=False, title_only=False, character_threshold=None):
+def scrape_reddit_thread(driver, dark_mode=False, title_only=False, character_threshold=None, ncomments=5):
     """
     Scrapes the post and answers of a Reddit thread using Selenium.
     """
     post_title_text, post_content_texts, post_header_image_path, post_content_images_paths = scrape_reddit_post(driver, dark_mode, title_only, character_threshold)
 
     # scrape answers
-    comment_tree_element = WebDriverWait(driver, 20).until(
-        EC.presence_of_element_located((By.XPATH, "/html/body/shreddit-app/div[2]/div/div/main/div/faceplate-batch/shreddit-comment-tree"))
-    )
+    try:
+        XPATH_COMMENT_TREE = (
+            "/html/body/shreddit-app/div[2]/div/div/main/div/faceplate-batch/shreddit-comment-tree"
+            " | "  # Union
+            "/html/body/shreddit-app/div[2]/div/div/main/shreddit-comment-tree-stats/div/faceplate-batch/shreddit-comment-tree"
+        )
+        comment_tree_element = WebDriverWait(driver, 20).until(
+            EC.presence_of_element_located((By.XPATH, XPATH_COMMENT_TREE))
+        )
+    except TimeoutException:
+        raise SeleniumError("Comment tree element not found")
+    
     comments = comment_tree_element.find_elements(By.TAG_NAME, "shreddit-comment")
     comments = [c for c in comments if c.get_attribute("depth") == "0"]  # Only top-level comments
     comments_content_paragraphs = []
     comments_content_image_paths = []
-    for i, comment in enumerate(comments[:5]):
+    for i, comment in enumerate(comments[:ncomments]):
         try:
             # Extract elements
             avatar_element = comment.find_element(By.XPATH, ".//*[@slot='commentAvatar']")
@@ -108,7 +118,7 @@ def scrape_reddit_thread(driver, dark_mode=False, title_only=False, character_th
             if not paragraphs:
                 raise Exception("No paragraphs found in comment.")
             # Split the paragraphs into groups of at most character_threshold characters (if set)
-            paragraphs_texts, paragraphs_images_paths = _split_paragraphs(paragraphs, character_threshold, dark_mode)
+            paragraphs_texts, paragraphs_images_paths = _split_paragraphs(driver, paragraphs, character_threshold, dark_mode, prefix=f"comment_{i+1}")
             comments_content_paragraphs.append(paragraphs_texts)
             assert len(paragraphs_images_paths) > 0, "No paragraphs images found"
             # Build list of images of this comment. If character_threshold is None, this will only be one image.
@@ -119,12 +129,14 @@ def scrape_reddit_thread(driver, dark_mode=False, title_only=False, character_th
             avatar_meta_image = merge_screenshots([avatar_image, meta_image], horizontal=True, dark_mode=dark_mode)
             comment_images[0] = merge_screenshots([avatar_meta_image, comment_images[0]], horizontal=False, dark_mode=dark_mode)
             comment_images[-1] = merge_screenshots([comment_images[-1], action_image], horizontal=False, dark_mode=dark_mode)
+            comment_images_paths = []
             for j, img in enumerate(comment_images):
                 comment_image_path = f"{TMP_FOLDER}/comment_{i+1}_{j+1}.png"
                 cropped_image = crop_extraspace(img, dark_mode=dark_mode)
                 cropped_image.save(comment_image_path)
                 print(f"Saved comment screenshot: {comment_image_path}")
-                comments_content_image_paths.append(comment_image_path)
+                comment_images_paths.append(comment_image_path)
+            comments_content_image_paths.append(comment_images_paths)
         except Exception as e:
             print("Error extracting comment:", e)
     return post_title_text, post_content_texts, post_header_image_path, post_content_images_paths, comments_content_paragraphs, comments_content_image_paths
@@ -184,19 +196,18 @@ def scrape_reddit_post_header(driver, dark_mode):
 def scrape_reddit_post_content(driver, dark_mode, character_threshold):
     try:
         # Wait for the content to appear
-        content_element = WebDriverWait(driver, 20).until(
+        content_element = WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.XPATH, "/html/body/shreddit-app/div[2]/div/div/main/shreddit-post/div[3]/div/div[1]"))
         )
         # Extract paragraphs
         paragraphs = content_element.find_elements(By.TAG_NAME, "p")
-        if not paragraphs:
-            raise Exception("No paragraphs found")
         
-        return _split_paragraphs(paragraphs, character_threshold, dark_mode)
-    except Exception as e:
-        raise SeleniumError(str(e))
+        content_texts, content_images_paths = _split_paragraphs(driver, paragraphs, character_threshold, dark_mode, prefix='post_content')
+        return content_texts, content_images_paths
+    except TimeoutException:
+        return [], []
     
-def _split_paragraphs(paragraphs, character_threshold, dark_mode):
+def _split_paragraphs(driver, paragraphs, character_threshold, dark_mode, prefix):
     content_texts = []
     content_images_paths = []
     if len(paragraphs) > 0:
@@ -220,7 +231,7 @@ def _split_paragraphs(paragraphs, character_threshold, dark_mode):
             # Check if the total text length exceeds the threshold
             if (character_threshold is not None and current_text_length >= character_threshold) or i == len(paragraphs) - 1:
                 # save the group of paragraphs as a screenshot
-                content_image_file_path = save_screenshot_group(driver, current_group, screenshot_index, dark_mode=dark_mode)
+                content_image_file_path = save_screenshot_group(driver, current_group, screenshot_index, dark_mode=dark_mode, prefix=prefix)
                 content_images_paths.append(content_image_file_path)
                 content_texts.append(current_text.strip())
                 screenshot_index += 1
@@ -257,7 +268,7 @@ def setup_driver_reddit(thread_url, dark_mode):
     except Exception as e:
         raise SeleniumError(str(e))
 
-def save_screenshot_group(driver, paragraph_group, screenshot_index, dark_mode):
+def save_screenshot_group(driver, paragraph_group, screenshot_index, dark_mode, prefix):
     """
     Saves a screenshot for a grouped set of paragraphs.
     :param driver: Selenium WebDriver instance
@@ -282,7 +293,7 @@ def save_screenshot_group(driver, paragraph_group, screenshot_index, dark_mode):
     if paragraph_images:
         merged_image = merge_screenshots(paragraph_images, dark_mode=dark_mode)
         cropped_image = crop_extraspace(merged_image, dark_mode=dark_mode)
-        final_screenshot_filename = f"{TMP_FOLDER}/temp_group_{screenshot_index}.png"
+        final_screenshot_filename = f"{TMP_FOLDER}/{prefix}_{screenshot_index}.png"
         cropped_image.save(final_screenshot_filename)
         print(f"Saved grouped screenshot: {final_screenshot_filename}")
         return final_screenshot_filename

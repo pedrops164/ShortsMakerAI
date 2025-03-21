@@ -3,9 +3,9 @@ from web_scraper import scrape_reddit_post, setup_driver_reddit
 from short_creator import ShortCreator
 import os
 from narration import NarratorOpenAI
+from util import sanitize_filename
 
-# set output path for screenshots
-output_path = os.path.join('output', 'reddit_scary_story.mp4')
+output_dir = 'TiktokAutoUploader/VideosDirPath'
 
 class RedditScaryStory(ContentTemplate):
     def __init__(self, thread_link, bg_video, bg_music):
@@ -31,7 +31,8 @@ class RedditScaryStory(ContentTemplate):
 
         short_creator.add_background_video(self.bg_video)
         short_creator.add_background_music(self.bg_music)
+        title_text_sanitized = sanitize_filename(title_text)
+        output_path = os.path.join(output_dir, f'{title_text_sanitized}.mp4')
         short_creator.create_video(output_path)
         print('Short story generated for Reddit thread:', self.thread_link)
-
-        # pick up image audio pairs, and add them to the short creator
+        return output_path, title_text

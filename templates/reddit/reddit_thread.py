@@ -5,7 +5,7 @@ import os
 from narration import NarratorOpenAI
 from util import sanitize_filename
 
-output_dir = 'output'
+output_dir = 'TiktokAutoUploader/VideosDirPath'
 
 class RedditThread(ContentTemplate):
     def __init__(self, thread_link, bg_video, bg_music=None):
@@ -43,7 +43,8 @@ class RedditThread(ContentTemplate):
         if self.bg_music:
             short_creator.add_background_music(self.bg_music)
         title_text_sanitized = sanitize_filename(post_title_text)
-        output_path = os.path.join(output_dir, f'{title_text_sanitized}.mp4')
+        video_filename = f'{title_text_sanitized}.mp4'
+        output_path = os.path.join(output_dir, video_filename)
         short_creator.create_video(output_path)
         print(f'Short story generated for Reddit thread {self.thread_link} in path {output_path}')
-        return output_path, post_title_text
+        return output_path, post_title_text, video_filename

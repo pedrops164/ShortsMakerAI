@@ -3,6 +3,7 @@ from content_manager import ContentManager
 from templates import RedditThread
 import os
 import praw
+import subprocess
 
 def get_top_threads_link(subreddit, topn):
     client_id = os.getenv('REDDIT_CLIENT_ID')
@@ -28,10 +29,41 @@ def run():
         # creates a RedditThread object
         reddit_thread = RedditThread(thread_link, 'bg_videos/minecraft3.mp4')
         # generates a short story for the Reddit thread, and gets the path of the generated video
-        video_file_path, video_title = reddit_thread.generate_short()
+        video_file_path, video_title, video_filename = reddit_thread.generate_short()
         print(f'Short story generated for Reddit thread {thread_link} in path {video_file_path}, with title {video_title}')
+        
+        # --- Call the TikTok uploader script here ---
+        # Example of calling: python cli.py upload --user <username> -v <video_filename> -t <video_title>
+        try:
+            cmd = [
+                "python.exe",
+                "cli.py",
+                "upload",
+                "--user",
+                os.getenv('TIKTOK_USERNAME'),
+                "-v",
+                video_filename,
+                "-t",
+                video_title
+            ]
+            # Run in 'TiktokAutoUploader' directory
+            result = subprocess.run(cmd, cwd="TiktokAutoUploader", check=True)
+            print("TikTok upload script completed.")
+            print(result.stdout)
+            print(result.stderr)
+        except subprocess.CalledProcessError as e:
+            print("Error running the TikTok upload script:", e)
+            # Depending on your workflow, you might want to skip marking processed if upload fails
+            continue
+
         # marks the thread link as processed
         contentManager.mark_processed(thread_link)
 
+import time
+import schedule
 if __name__ == '__main__':
     run()
+    schedule.every(24).hours.do(run)
+    while True:
+        schedule.run_pending()
+        time.sleep(60*5)  # check every 5 minutes

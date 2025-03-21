@@ -40,7 +40,7 @@ def main():
             sys.exit(1)
 
         reddit_thread = RedditThread(args.thread_link, args.bg_video, args.bg_music)
-        reddit_thread.generate_short()
+        video_file_path, video_title, video_filename = reddit_thread.generate_short()
     else:
         print('invalid content type')
 

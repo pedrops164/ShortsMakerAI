@@ -8,6 +8,7 @@ from moviepy.audio.AudioClip import CompositeAudioClip
 from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
 from moviepy.video.VideoClip import ImageClip
 import moviepy.audio.fx.all as afx
+import os
 
 target_width, target_height = 576, 1024  # 9:16 aspect ratio
 
@@ -73,25 +74,41 @@ class ShortCreator:
         clips = []
         current_time = 0  # Track timing
         
-        for image_path, audio_path in self.image_audio_pairs:
+        for media_path, audio_path in self.image_audio_pairs:
             audio_clip = AudioFileClip(audio_path)
-            image_clip = ImageClip(image_path, duration=audio_clip.duration)
+            audio_duration = audio_clip.duration
+        
+            # Decide if media is a GIF (or short video) vs a static image
+            file_ext = os.path.splitext(media_path)[1].lower()
             
+            if file_ext in [".gif"]:
+                # Treat animated GIFs like short video clips
+                content_clip = VideoFileClip(media_path)
+                
+                # If you want the GIF to play only for the audio duration, subclip it:
+                gif_duration = min(content_clip.duration, audio_clip.duration)
+                content_clip = content_clip.subclip(0, gif_duration)
+                
+            else:
+                # Treat as a static image
+                content_clip = ImageClip(media_path, duration=audio_clip.duration)
+                
             # Resize image proportionally so that width is 70% of video width
-            aspect_ratio = image_clip.size[1] / image_clip.size[0]  # Height / Width
+            aspect_ratio = content_clip.h / content_clip.w
             image_target_width = int(0.7 * target_width)  # 70% of video width
             image_target_height = int(image_target_width * aspect_ratio)  # Maintain aspect ratio
-            image_clip = image_clip.resize(width=image_target_width, height=image_target_height)
+            # Resize. For ImageClip or VideoFileClip, .resize() works similarly.
+            content_clip = content_clip.resize((image_target_width, image_target_height))
             
             # Position the image in the center
-            image_clip = image_clip.set_position(("center"))
-            image_clip = image_clip.set_audio(audio_clip) # associate audio to image
-            image_clip = image_clip.set_start(current_time) # set the start of the clip
+            content_clip  = content_clip.set_position(("center"))
+            content_clip  = content_clip.set_audio(audio_clip) # associate audio to image
+            content_clip  = content_clip.set_start(current_time) # set the start of the clip
             
-            clips.append(image_clip)
+            clips.append(content_clip)
             
             # Update time for next image-audio pair
-            current_time += audio_clip.duration
+            current_time += audio_duration
         
         # randomly sample background video clip from the background video
         # we do it here because we know all the clips have been added, and thus we know the total duration of the video.

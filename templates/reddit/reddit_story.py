@@ -1,5 +1,4 @@
 from templates.content_template import ContentTemplate
-from web_scraper import scrape_reddit_post, setup_driver_reddit
 from short_creator import ShortCreator
 import os
 from narration import NarratorOpenAI
@@ -17,6 +16,7 @@ class RedditScaryStory(ContentTemplate):
         print('Generating short story for Reddit thread:', self.thread_link)
         short_creator = ShortCreator()
         narrator = NarratorOpenAI('onyx')
+        
         driver = setup_driver_reddit(self.thread_link, dark_mode=True)
         title_text, content_texts, header_image_path, content_images_paths = scrape_reddit_post(driver, dark_mode=True, character_threshold=150)
         driver.quit()

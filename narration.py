@@ -96,6 +96,7 @@ class NarratorOpenAI(Narrator):
         self.client = OpenAI(api_key=openai_key)
         self.voice_actor = voice_actor
         self.speed = speed
+        self.model = 'gpt-4o-mini-tts'  # or 'tts-1'
 
     def change_audio_speed(self, input_path, output_path, speed_factor):
         """
@@ -123,9 +124,10 @@ class NarratorOpenAI(Narrator):
             # Generate OpenAI TTS audio
             audio_data = self.client.audio.speech.create(
                 input=text,
-                model='tts-1',
+                model=self.model,
                 voice=self.voice_actor,
-                response_format='mp3'
+                response_format='mp3',
+                #instructions='You are a narrator who speaks clearly and at a fast pace',
             )
             audio_data.write_to_file(raw_output_path)
 

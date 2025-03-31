@@ -7,6 +7,7 @@ import base64
 from requests.exceptions import ChunkedEncodingError
 from abc import ABC, abstractmethod
 from psola import from_file_to_file
+import random
 
 TMP_FOLDER = os.environ.get('TMP_FOLDER')
 
@@ -98,6 +99,17 @@ class NarratorOpenAI(Narrator):
         self.speed = speed
         self.model = 'gpt-4o-mini-tts'  # or 'tts-1'
 
+    def random_openai_voiceactor(self):
+        """
+        Returns a random OpenAI voice actor from the available list.
+        """
+        voice_actors = [
+            'alloy', 'ash', 'ballad',
+            'coral', 'echo', 'fable',
+            'nova', 'sage', 'shimmer',
+        ]
+        return random.choice(voice_actors)
+
     def change_audio_speed(self, input_path, output_path, speed_factor):
         """
         Adjusts the speed of an audio file without distorting the pitch.
@@ -111,7 +123,7 @@ class NarratorOpenAI(Narrator):
         
         from_file_to_file(input_path, output_path, constant_stretch=speed_factor)
 
-    def create_audio_file(self, text):
+    def create_audio_file(self, text, voice_actor=None):
         text = text.strip()
         if text and text[-1] not in ('.', '?'):
             text += '.'
@@ -120,12 +132,14 @@ class NarratorOpenAI(Narrator):
         final_output_path = os.path.join(TMP_FOLDER, f'audio_{self.audio_index}.mp3')
         self.audio_index += 1
 
+        voice = voice_actor or self.voice_actor
+
         try:
             # Generate OpenAI TTS audio
             audio_data = self.client.audio.speech.create(
                 input=text,
                 model=self.model,
-                voice=self.voice_actor,
+                voice=voice,
                 response_format='mp3',
                 #instructions='You are a narrator who speaks clearly and at a fast pace',
             )

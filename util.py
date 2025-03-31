@@ -44,3 +44,16 @@ def split_paragraphs_from_text(text, character_threshold=300):
         split_paragraphs.append(current_paragraph.strip())
 
     return split_paragraphs
+
+def replace_acronyms(title):
+    title = title.replace('AITAH', 'Am I The Asshole')
+    title = title.replace('AITA', 'Am I The Asshole')
+    title = title.replace('WIBTA', 'Would I be the asshole')
+    title = title.replace('TIFU', 'Today I Fucked Up')
+    title = title.replace('TLDR', 'Too Long Didn\'t Read')
+    title = title.replace('YTA', 'You\'re The Asshole')
+    title = title.replace('NTA', 'Not The Asshole')
+    title = title.replace('ESH', 'Everyone Sucks Here')
+    title = title.replace('NAH', 'No Assholes Here')
+    title = title.replace('INFO', 'Information')
+    return title

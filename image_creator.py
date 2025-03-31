@@ -1,7 +1,7 @@
 from PIL import Image, ImageDraw, ImageFont, ImageSequence, ImageColor
 import os
 from praw.models import Comment
-from util import split_paragraphs_from_text
+from util import split_paragraphs_from_text, replace_acronyms
 
 TMP_FOLDER = os.environ.get('TMP_FOLDER')
 
@@ -260,7 +260,7 @@ class RedditImageCreator:
         """
         Create images for Reddit comments.
         """
-        comment_text = comment.body
+        comment_text = replace_acronyms(comment.body)
         comment_author_name = comment.author.name if comment.author else "Unknown"
         comment_paragraphs = split_paragraphs_from_text(comment_text)
 

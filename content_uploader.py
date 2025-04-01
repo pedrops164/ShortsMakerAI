@@ -47,7 +47,7 @@ def post_tiktok_video(video_title, video_filename):
     # --- Call the TikTok uploader script here ---
     # Example of calling: python cli.py upload --user <username> -v <video_filename> -t <video_title>
     cmd = [
-        "python.exe",
+        "python",
         "cli.py",
         "upload",
         "--user",

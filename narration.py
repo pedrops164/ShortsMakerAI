@@ -207,7 +207,7 @@ class NarratorElevenLabs(Narrator):
         selected_voice_id = random.choice(self.available_voices)
         return selected_voice_id
 
-    def create_audio_file(self, text):
+    def create_audio_file(self, text, voice_actor=None):
         text = text.strip()
         if text and text[-1] not in ('.', '?', '!'):
             text += '.'
@@ -217,7 +217,8 @@ class NarratorElevenLabs(Narrator):
         
         try:
             # Select voice ID (either specified or random)
-            voice_id = self.voice_id if self.voice_id else self.random_voiceactor()
+            #voice_id = self.voice_id if self.voice_id else self.random_voiceactor()
+            voice_id = voice_actor if voice_actor else self.voice_id
             
             # Set up the API request
             url = f"{self.base_url}/text-to-speech/{voice_id}"

@@ -1,7 +1,7 @@
 from templates.content_template import ContentTemplate
 from short_creator import ShortCreator
 import os
-from narration import NarratorOpenAI
+from narration import NarratorElevenLabs
 from util import sanitize_filename, split_paragraphs_from_text, replace_acronyms
 from image_creator import RedditImageCreator
 import re
@@ -65,7 +65,8 @@ class RedditThread(ContentTemplate):
     def generate_short(self):
         print('Generating short story for Reddit thread:', self.thread_object.title)
         short_creator = ShortCreator()
-        narrator = NarratorOpenAI('ash', speed=1.25)
+        #narrator = NarratorOpenAI('ash', speed=1.25)
+        narrator = NarratorElevenLabs()
 
         post_title_text, post_content_texts, post_content_images_paths, comments_content_paragraphs, comments_content_image_paths = self._scrape_from_praw()
         post_header_image_path = self.reddit_image_creator.create_reddit_post_gif(post_title_text)
@@ -75,7 +76,7 @@ class RedditThread(ContentTemplate):
         #comments_narrations_paths = [[narrator.create_audio_file(text) for text in comment] for comment in comments_content_paragraphs]
         comments_narrations_paths = []
         for comment in comments_content_paragraphs:
-            random_voiceactor = narrator.random_openai_voiceactor()
+            random_voiceactor = narrator.random_voiceactor()
             narrations = [narrator.create_audio_file(text, random_voiceactor) for text in comment]
             comments_narrations_paths.append(narrations)
         

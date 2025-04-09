@@ -99,7 +99,7 @@ class NarratorOpenAI(Narrator):
         self.speed = speed
         self.model = 'gpt-4o-mini-tts'  # or 'tts-1'
 
-    def random_openai_voiceactor(self):
+    def random_voiceactor(self):
         """
         Returns a random OpenAI voice actor from the available list.
         """
@@ -155,3 +155,103 @@ class NarratorOpenAI(Narrator):
             return final_output_path
         except ChunkedEncodingError:
             raise Exception('OpenAI API request failed')
+        
+
+import requests
+
+class NarratorElevenLabs(Narrator):
+    """
+    ElevenLabs-based narration with voice selection capabilities.
+    Uses direct API calls to avoid version compatibility issues.
+    """
+    def __init__(self, voice_id='pNInz6obpgDQGcFmaJgB', stability=0.5, speed=1.2):
+        # voice defaults to Adam with max speed
+        super().__init__()
+        
+        # Validate ElevenLabs API key
+        self.api_key = os.environ.get('ELEVENLABS_KEY')
+        if not self.api_key:
+            raise Exception('ElevenLabs API key not set')
+        
+        self.voice_id = voice_id  # If None, will use random voice
+        self.stability = stability
+        self.speed = speed
+        self.base_url = "https://api.elevenlabs.io/v1"
+        self.available_voices = ['9BWtsMINqrJLrRacOk9x', 'CwhRBWXzGAHq8TQ4Fs17', 'EXAVITQu4vr4xnSDxMaL', 'FGY2WhTYpPnrIDTdsKH5', 'IKne3meq5aSn9XLyUdCD', 'JBFqnCBsd6RMkjVDRZzb', 'N2lVS1w4EtoT3dr4eOWO', 'SAz9YHcvj6GT2YYXdXww', 'TX3LPaxmHKxFdv7VOQHJ', 'XB0fDUnXU5powFXDhCwa', 'Xb7hH8MSUJpSbSDYk0k2', 'XrExE9yKIg1WjnnlVkGX', 'bIHbv24MWmeRgasZH58o', 'cgSgspJ2msm6clMCkdW9', 'cjVigY5qzO86Huf0OWal', 'iP95p4xoKVk53GoZ742B', 'nPczCjzI2devNBz1zQrb', 'onwK4e9ZLuTAKqWW03F9', 'pFZP5JQG7iQjIQuC4Bku', 'pqHfZKP75CvOlQylNhV4']
+        
+    def get_available_voices(self):
+        """
+        Fetches available voices from ElevenLabs API using direct HTTP request.
+        """
+        if self.available_voices is not None:
+            return self.available_voices
+            
+        url = f"{self.base_url}/voices"
+        headers = {
+            "Accept": "application/json",
+            "xi-api-key": self.api_key
+        }
+        
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            voices_data = response.json()
+            self.available_voices = voices_data.get('voices', [])
+            return self.available_voices
+        else:
+            raise Exception(f"Failed to fetch voices: {response.status_code}, {response.text}")
+
+    def random_voiceactor(self):
+        """
+        Returns a random ElevenLabs voice ID from the available voices.
+        """
+        selected_voice_id = random.choice(self.available_voices)
+        return selected_voice_id
+
+    def create_audio_file(self, text):
+        text = text.strip()
+        if text and text[-1] not in ('.', '?', '!'):
+            text += '.'
+        
+        output_path = os.path.join(TMP_FOLDER, f'audio_{self.audio_index}.mp3')
+        self.audio_index += 1
+        
+        try:
+            # Select voice ID (either specified or random)
+            voice_id = self.voice_id if self.voice_id else self.random_voiceactor()
+            
+            # Set up the API request
+            url = f"{self.base_url}/text-to-speech/{voice_id}"
+            headers = {
+                "Accept": "audio/mpeg",
+                "Content-Type": "application/json",
+                "xi-api-key": self.api_key
+            }
+            
+            data = {
+                "text": text,
+                "model_id": "eleven_multilingual_v2",
+                "voice_settings": {
+                    "stability": self.stability,
+                    "speed": self.speed,
+                }
+            }
+            
+            # Make the API request
+            response = requests.post(url, json=data, headers=headers)
+            
+            if response.status_code == 200:
+                # Save the audio to a file
+                with open(output_path, "wb") as file:
+                    file.write(response.content)
+                return output_path
+            else:
+                raise Exception(f"API request failed with status {response.status_code}: {response.text}")
+                
+        except Exception as e:
+            raise Exception(f'ElevenLabs API request failed: {str(e)}')
+        
+if __name__ == "__main__":
+    # Example usage
+    narrator = NarratorElevenLabs()
+    audio_file = narrator.create_audio_file("Hello, this is a test.")
+    print(f"Audio file created at: {audio_file}")

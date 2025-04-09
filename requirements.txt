@@ -9,3 +9,4 @@ praw==7.8.1
 openai==1.69.0
 psola==0.0.1
 schedule==1.2.2
+elevenlabs==1.56.0

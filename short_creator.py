@@ -9,6 +9,7 @@ from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
 from moviepy.video.VideoClip import ImageClip
 import moviepy.audio.fx.all as afx
 import os
+import traceback
 
 target_width, target_height = 576, 1024  # 9:16 aspect ratio
 
@@ -151,39 +152,48 @@ class ShortCreator:
 
         # Process all image-audio pairs
         for media_path, audio_path in self.image_audio_pairs:
-            audio_clip = AudioFileClip(audio_path)
-            # Position audio at the current time
-            audio_clip = audio_clip.set_start(current_time)
-            audio_clips.append(audio_clip)
-            
-            # Process image or GIF
-            file_ext = os.path.splitext(media_path)[1].lower()
-            
-            if file_ext in [".gif"]:
-                content_clip = VideoFileClip(media_path)
-                gif_duration = min(content_clip.duration, audio_clip.duration)
-                content_clip = content_clip.subclip(0, gif_duration)
-            else:
-                content_clip = ImageClip(media_path, duration=audio_clip.duration)
-            
-            # Resize image
-            aspect_ratio = content_clip.h / content_clip.w
-            image_target_width = int(0.7 * target_width)
-            image_target_height = int(image_target_width * aspect_ratio)
-            content_clip = content_clip.resize((image_target_width, image_target_height))
-            
-            # Position the clip
-            content_clip = content_clip.set_position("center")
-            content_clip = content_clip.set_start(current_time)  # Set start time but don't add audio yet
-            
-            clips.append(content_clip)
-            current_time += audio_clip.duration
+            audio_clip = None
+            try:
+                audio_clip = AudioFileClip(audio_path)
+                audio_clip = audio_clip.set_start(current_time)
+                audio_clips.append(audio_clip)
+
+                file_ext = os.path.splitext(media_path)[1].lower()
+                content_clip = None
+                try:
+                    if file_ext in [".gif"]:
+                        content_clip = VideoFileClip(media_path)
+                        gif_duration = min(content_clip.duration, audio_clip.duration)
+                        content_clip = content_clip.subclip(0, gif_duration)
+                    else:
+                        content_clip = ImageClip(media_path, duration=audio_clip.duration)
+
+                    aspect_ratio = content_clip.h / content_clip.w
+                    image_target_width = int(0.7 * target_width)
+                    image_target_height = int(image_target_width * aspect_ratio)
+                    content_clip = content_clip.resize((image_target_width, image_target_height))
+                    content_clip = content_clip.set_position("center")
+                    content_clip = content_clip.set_start(current_time)
+                    clips.append(content_clip)
+                except Exception as e:
+                    print(f"Error processing media {media_path}: {e}")
+                    traceback.print_exc()
+
+                current_time += audio_clip.duration
+            except Exception as e:
+                print(f"Error processing audio {audio_path}: {e}")
+                traceback.print_exc()
 
         # Sample background video
-        bg_video_max_start_time = max(0, self.background_video.duration - current_time)
-        bg_video_start_time = np.random.uniform(0, bg_video_max_start_time)
-        self.background_video = self.background_video.subclip(bg_video_start_time, bg_video_start_time + current_time)
-        clips.insert(0, self.background_video)
+        bg_video_clip = None
+        try:
+            bg_video_max_start_time = max(0, self.background_video.duration - current_time)
+            bg_video_start_time = np.random.uniform(0, bg_video_max_start_time)
+            bg_video_clip = self.background_video.subclip(bg_video_start_time, bg_video_start_time + current_time)
+            clips.insert(0, bg_video_clip)
+        except Exception as e:
+            print(f"Error processing background video: {e}")
+            traceback.print_exc()
 
         # Create the composite video without audio first
         final_video = CompositeVideoClip(clips, size=(target_width, target_height))
@@ -192,25 +202,37 @@ class ShortCreator:
         combined_audio = CompositeAudioClip(audio_clips)
 
         # Add background music if available
+        final_audio = combined_audio
         if self.background_music:
-            bg_music_max_start_time = max(0, self.background_music.duration - current_time)
-            bg_music_start_time = np.random.uniform(0, bg_music_max_start_time)
-            bg_music = self.background_music.subclip(bg_music_start_time, bg_music_start_time + current_time)
-            
-            # Combine all audio
-            final_audio = CompositeAudioClip([combined_audio, bg_music])
-        else:
-            final_audio = combined_audio
+            bg_music = None
+            try:
+                bg_music_max_start_time = max(0, self.background_music.duration - current_time)
+                bg_music_start_time = np.random.uniform(0, bg_music_max_start_time)
+                bg_music = self.background_music.subclip(bg_music_start_time, bg_music_start_time + current_time)
+                final_audio = CompositeAudioClip([combined_audio, bg_music])
+            except Exception as e:
+                print(f"Error processing background music: {e}")
+                traceback.print_exc()
 
         # Set the final audio to the video
         final_video = final_video.set_audio(final_audio)
         final_video = final_video.set_duration(current_time)
 
         # Write output video with higher audio bitrate
-        final_video.write_videofile(
-            output_path, 
-            codec="libx264", 
-            fps=30, 
-            audio_codec="aac",
-            audio_bitrate="192k"  # Increase audio quality
-        )
+        try:
+            final_video.write_videofile(
+                output_path,
+                codec="libx264",
+                fps=30,
+                audio_codec="aac",
+                audio_bitrate="192k"
+            )
+        except Exception as e:
+            print(f"Error writing video file: {e}")
+            traceback.print_exc()
+        finally:
+            final_video.close()
+            if combined_audio:
+                combined_audio.close()
+            if final_audio != combined_audio and final_audio:
+                final_audio.close()

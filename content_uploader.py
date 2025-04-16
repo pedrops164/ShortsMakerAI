@@ -38,10 +38,31 @@ def post_subreddit_daily(subreddit, topn, search_topn, time_filter):
         contentManager.mark_processed(thread.url)
 
 def run():
-    post_subreddit_daily('AmItheAsshole', 5, 10, 'week')
-    post_subreddit_daily('AskReddit', 10, 50, 'day')
-    post_subreddit_daily('relationship_advice', 5, 10, 'week')
-    post_subreddit_daily('tifu', 5, 10, 'week')
+    try:
+        print("Starting run function...")
+        post_subreddit_daily('AmItheAsshole', 5, 10, 'week')
+        post_subreddit_daily('AskReddit', 10, 30, 'day')
+        post_subreddit_daily('relationship_advice', 5, 10, 'week')
+        post_subreddit_daily('tifu', 5, 10, 'week')
+
+        # --- Delete files in TiktokAutoUploader\VideosDirPath ---
+        videos_dir_path = os.path.join("TiktokAutoUploader", "VideosDirPath")
+        if os.path.exists(videos_dir_path) and os.path.isdir(videos_dir_path):
+            print("Deleting files in VideosDirPath...")
+            for filename in os.listdir(videos_dir_path):
+                file_path = os.path.join(videos_dir_path, filename)
+                try:
+                    if os.path.isfile(file_path):
+                        os.remove(file_path)
+                        print(f"Deleted file: {file_path}")
+                except Exception as e:
+                    print(f"Error deleting file {file_path}: {e}")
+            print("Finished deleting files.")
+        else:
+            print(f"Directory not found: {videos_dir_path}")
+        print("Run function finished.")
+    except Exception as e:
+        print(f"An error occurred in the run function: {e}")
 
 def post_tiktok_video(video_title, video_filename):
     # --- Call the TikTok uploader script here ---
